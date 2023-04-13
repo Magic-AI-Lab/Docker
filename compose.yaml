@@ -1,0 +1,186 @@
+version: '3.9'
+
+x-chatapp-image: &chatapp-image mtlab/chatapp:${TAG:-latest}
+
+services:
+  app:
+    image: *chatapp-image
+    ports:
+      - "8089:8089"
+    env_file: .env
+    command: [ "/app/docker/docker-bootstrap.sh", "app" ]
+    depends_on:
+      - app-init
+    volumes:
+      - storage:/tmp/storage
+    restart: unless-stopped
+
+  app-init:
+    image: *chatapp-image
+    env_file: .env
+    command: [ "/app/docker/docker-bootstrap.sh", "init" ]
+    depends_on:
+      - db
+      - elasticsearch
+    healthcheck:
+      disable: true
+
+  jupyter:
+    image: *chatapp-image
+    ports:
+      - "8889:8889"
+    env_file:
+      - .env
+    command: [ "/app/docker/docker-bootstrap.sh", "jupyter" ]
+    depends_on:
+      - db
+    volumes:
+      - storage:/tmp/storage
+    restart: unless-stopped
+
+  scraper:
+    image: *chatapp-image
+    ports:
+      - "8090:8090"
+    env_file: .env
+    command: [ "/app/docker/docker-bootstrap.sh", "scraper" ]
+    depends_on:
+      - kafka
+      - db
+      - redis
+      - celery-worker
+    volumes:
+      - storage_scraper:/tmp/storage
+    restart: unless-stopped
+
+  celery-worker:
+    image: *chatapp-image
+    env_file: .env
+    command: [ "/app/docker/docker-bootstrap.sh", "worker" ]
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  celery-flower:
+    image: *chatapp-image
+    env_file: .env
+    command: [ "/app/docker/docker-bootstrap.sh", "flower" ]
+    ports:
+      - 5555:5555
+    depends_on:
+      - redis
+      - celery-worker
+    restart: unless-stopped
+    volumes:
+      - flower:/data
+
+  db:
+    image: ankane/pgvector:v0.4.0
+    env_file: .env
+    ports:
+      - "5432:5432"
+    volumes:
+      - db_data:/var/lib/postgresql/data:delegated
+    restart: unless-stopped
+
+  pgadmin:
+    image: dpage/pgadmin4
+    ports:
+      - "4835:80"
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:-admin@chatbd.ai}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:-mtchatapp}
+    volumes:
+      - pgadmin:/var/lib/pgadmin
+    restart: unless-stopped
+
+  redis:
+    image: redis:5.0.0
+    expose:
+      - 6379
+    restart: unless-stopped
+    volumes:
+      - redis:/data
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.3.0
+    container_name: zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    restart: unless-stopped
+
+  kafka:
+    image: confluentinc/cp-kafka:7.3.0
+    container_name: kafka
+    depends_on:
+      - zookeeper
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: 'zookeeper:2181'
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_INTERNAL:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_INTERNAL://kafka:29092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "kafka-topics.sh",
+          "--list",
+          "--zookeeper",
+          "zookeeper:2181"
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    restart: unless-stopped
+
+  kafka-ui:
+    image: provectuslabs/kafka-ui:v0.6.0
+    container_name: kafka-ui
+    ports:
+      - "8080:8080"
+    depends_on:
+      - kafka
+    environment:
+      KAFKA_CLUSTERS_0_NAME: kafka
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: PLAINTEXT://kafka:9092
+      KAFKA_CLUSTERS_0_ZOOKEEPER: zookeeper:2181
+    restart: unless-stopped
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.7.0
+    environment:
+      - network.host=0.0.0.0
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - ELASTIC_PASSWORD=
+      - ES_PORT=0.0.0.0:9200
+      - "ES_JAVA_OPTS=-Xms6g -Xmx6g"
+    ports:
+      - 9200:9200
+    volumes:
+      - esdata:/usr/share/elasticsearch/data
+    restart: unless-stopped
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.7.0
+    container_name: kibana
+    environment:
+      - ELASTICSEARCH_URL=http://elasticsearch:9200
+    ports:
+      - "5601:5601"
+    depends_on:
+      - elasticsearch
+    restart: unless-stopped
+
+volumes:
+  db_data:
+  redis:
+  storage:
+  storage_scraper:
+  pgadmin:
+  esdata:
+  flower:
