@@ -28,7 +28,7 @@ Add the current user to the docker group and reboot in order to run docker witho
 Navigate to any directory of your choice and clone ChatBD project
 
 ```bash
-    git clone git@github.com:Magic-AI-Lab/Docker.git chatbd
+    git clone https://github.com/Magic-AI-Lab/Docker.git chatbd
 ```
 
 ## Editing Variables
